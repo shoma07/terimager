@@ -1,0 +1,84 @@
+#!/usr/bin/env ruby
+require 'optparse'
+require 'io/console/size'
+require 'open-uri'
+require 'tempfile'
+rows, cols = IO.console_size
+option = {
+  width: (cols / 2),
+  height: (rows - 1),
+  max: false,
+  keep: true,
+  colors: 256,
+  text: "  ",
+  background: true,
+  gradually: false,
+}
+opt = OptionParser.new
+opt.on("-w=VAL", "--width=VAL", Integer, "width, current: #{option[:width]}") do |i|
+  option[:width] = i
+end
+opt.on("-h=VAL", "--height=VAL", Integer, "height, current: #{option[:height]}") do |i|
+  option[:height] = i
+end
+opt.on("-m", "--[no-]max", TrueClass, "max width, default: #{option[:max]}") do |b|
+  option[:max] = b
+end
+opt.on("-k", "--[no-]keep", TrueClass, "keep aspect ratio, default: #{option[:keep]}") do |b|
+  option[:keep] = b
+end
+opt.on("-c=VAL", "--colors=VAL", Integer, "colors, default: #{option[:colors]}") do |i|
+  option[:colors] = i
+end
+opt.on("-t=VAL", "--text=VAL", String, "fill text, default: #{option[:text]}") do |s|
+  option[:text] = s[0..1]
+end
+opt.on("-b", "--[no-]background", TrueClass, "fill background, default: #{option[:background]}") do |b|
+  option[:background] = b
+end
+opt.on("-g", "--[no-]gradually", TrueClass, "gradually output, default: #{option[:gradually]}") do |b|
+  option[:gradually] = b
+end
+opt.parse!(ARGV)
+file = ARGV.shift
+temp_file = Tempfile.new
+if file.nil?
+  puts "Argument error: File path"
+  exit 1
+elsif URI.parse(file).scheme =~ /^http/
+  begin
+    open(file) do |f|
+      temp_file.write(f.read)
+    end
+    file = temp_file.path
+  rescue OpenURI::HTTPError => e
+    puts "#{file}: #{e}"
+    exit 1
+  end
+elsif !File.exist?(file)
+  puts "#{file}: File does not exist."
+  exit 1
+end
+resize = "#{option[:width]}x"
+resize << "#{option[:height]}" if !option[:max]
+resize << "!" if !option[:keep]
+code = option[:background] ? 48 : 38
+output = ""
+open("|convert -colors #{option[:colors]} -resize #{resize} #{file} txt:", "r") do |f|
+  f.gets
+  prev_height = 0
+  f.each_line do |line|
+    height = line.scan(/\d+/)[1].to_i
+    output << "\n" if prev_height != height
+    r, g, b = line.scan(/#[0-9A-F]{6}/)[0].scan(/[0-9A-F]{1,2}/).map{|s|s.to_i(16)}
+    color = (r/51*36)+(g/51*6)+(b/51)+16
+    output << "\e[#{code};5;#{color}m#{option[:text]}\e[0m"
+    if option[:gradually]
+      print output
+      output = ""
+    end
+    prev_height = height
+  end
+end
+puts output
+temp_file.close
